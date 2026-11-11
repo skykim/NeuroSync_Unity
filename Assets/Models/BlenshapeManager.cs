@@ -87,6 +87,13 @@ public class BlendshapeManager : MonoBehaviour
                 
                 m_SkinnedMesh.SetBlendShapeWeight(blendshapeIndex, value * m_BlendShapeScale);
             }
+
+            // SampleHead's tongue follows the jaw through "tongue_"-prefixed copies (tongue_jawOpen, ...).
+            int tongueIndex = m_SkinnedMesh.sharedMesh.GetBlendShapeIndex("tongue_" + blendshapeName);
+            if (tongueIndex != -1)
+            {
+                m_SkinnedMesh.SetBlendShapeWeight(tongueIndex, value * m_BlendShapeScale);
+            }
         }
     }
 
@@ -127,9 +134,18 @@ public class BlendshapeManager : MonoBehaviour
     
     private List<BlendshapeFrame> ConvertToBlendshapeFrames(List<float[]> blendshapes)
     {
+        // Model output order = Apple Live Link Face (ARKit) order, channels 0..51.
+        // (The previous list interleaved left/right, so e.g. JawRight drove jawLeft and MouthRight drove mouthLeft.)
         string[] blendshapeNames = new string[]
         {
-            "eyeBlinking_Left", "eyeBlinking_Right", "eyeLookDown_L", "eyeLookDown_R", "eyeLookIn_L", "eyeLookIn_R", "eyeLookOut_L", "eyeLookOut_R", "eyeLookUp_L", "eyeLookUp_R", "eyeSquint_L", "eyeSquint_R", "eyeWide_Left", "eyeWide_Right", "jawForward", "jawLeft", "jawRight", "jawOpen", "mouthClosed", "mouthFunnel", "mouthPucker", "mouthLeft", "mouthRight", "mouthSmile_L", "mouthSmile_R", "mouthFrown_L", "mouthFrown_R", "mouthDimple_L", "mouthDimple_R", "mouthStretch_L", "mouthStretch_R", "mouthRollLower", "mouthRollUpper", "mouthShrugLower", "mouthShrugUpper", "mouthPress_L", "mouthPress_R", "mouthLowerDown_L", "mouthLowerDown_R", "mouthUpperUp_L", "mouthUpperUp_R", "browDown_Left", "browDown_Right", "browInnerUp", "browOuterUp_L", "browOuterUp_R", "cheekPuff", "cheekSquint_L", "cheekSquint_R", "noseSneer_L", "noseSneer_R", "tongue_jawOpen", "tongue_jawForward", "tongue_jawLeft", "tongue_jawRight", "tongue_tongueOut",
+            "eyeBlinking_Left", "eyeLookDown_L", "eyeLookIn_L", "eyeLookOut_L", "eyeLookUp_L", "eyeSquint_L", "eyeWide_Left",
+            "eyeBlinking_Right", "eyeLookDown_R", "eyeLookIn_R", "eyeLookOut_R", "eyeLookUp_R", "eyeSquint_R", "eyeWide_Right",
+            "jawForward", "jawRight", "jawLeft", "jawOpen", "mouthClosed", "mouthFunnel", "mouthPucker", "mouthRight", "mouthLeft",
+            "mouthSmile_L", "mouthSmile_R", "mouthFrown_L", "mouthFrown_R", "mouthDimple_L", "mouthDimple_R",
+            "mouthStretch_L", "mouthStretch_R", "mouthRollLower", "mouthRollUpper", "mouthShrugLower", "mouthShrugUpper",
+            "mouthPress_L", "mouthPress_R", "mouthLowerDown_L", "mouthLowerDown_R", "mouthUpperUp_L", "mouthUpperUp_R",
+            "browDown_Left", "browDown_Right", "browInnerUp", "browOuterUp_L", "browOuterUp_R",
+            "cheekPuff", "cheekSquint_L", "cheekSquint_R", "noseSneer_L", "noseSneer_R", "tongue_tongueOut",
         };
 
         List<BlendshapeFrame> frames = new List<BlendshapeFrame>();
