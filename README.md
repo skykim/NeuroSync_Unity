@@ -23,6 +23,19 @@ This project requires the NeuroSync model in the ONNX format.
 1.  The original model is available at the [AnimaVR Hugging Face repository](https://huggingface.co/AnimaVR/NEUROSYNC).
 2.  You can convert the original model to ONNX format using the resources available at [skykim/NeuroSync_Local_API_ONNX](https://github.com/skykim/NeuroSync_Local_API_ONNX). Please follow the instructions in that repository to generate the `.onnx` file.
 
+### Parity with the Python reference (11/11/2026)
+
+The on-device path now matches the Python NeuroSync pipeline to float32 precision
+(final blendshapes within ~4e-5 on CPU and GPUCompute, Inference Engine 2.2.1 and 2.6.1):
+
+- Re-export `audio_feature_extractor.onnx` with the updated exporter in
+  [NeuroSync_Local_API_ONNX](https://github.com/skykim/NeuroSync_Local_API_ONNX). Models made with the old exporter differ from librosa by up to ~10 per feature.
+- Select the ONNX files and run **Tools ▸ NeuroSync ▸ Serialize Selected ONNX to StreamingAssets**
+  (writes `<name>.sentis` fp32 and `<name>_fp16.sentis`). The controller loads
+  `audio_feature_extractor.sentis` (keep it fp32) and `neurosync_fp16.sentis` by default; both names are fields on `NeurosuncController`.
+- `AudioUtils` resamples with a Kaiser-windowed sinc filter and normalises after resampling, as librosa does.
+  The old linear interpolation changed the final blendshapes by up to ~4.6.
+
 ## 🚀 Getting Started
 
 ### 1. Project Setup

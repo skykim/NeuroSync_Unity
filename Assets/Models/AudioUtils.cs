@@ -5,7 +5,23 @@ using UnityEngine;
 
 public static class AudioUtils
 {
-    public static float[] GetNormalizedAudioData(AudioClip clip)
+    /// <summary>Feature extractor needs at least 9 STFT frames (same as extract_features.py).</summary>
+    public const int MinSamples88k = 8 * 735;
+
+    /// <summary>
+    /// Mirrors the Python reference loader (librosa.load(sr=88200) + peak normalisation):
+    /// downmix to mono, resample with a band-limited sinc filter, THEN normalise to peak 1.
+    /// </summary>
+    public static float[] LoadForFeatureExtraction(AudioClip clip, int targetSampleRate = 88200)
+    {
+        float[] mono = GetMonoAudioData(clip);
+        if (mono == null) return null;
+        float[] resampled = Resample(mono, clip.frequency, targetSampleRate);
+        NormalizePeak(resampled);
+        return resampled;
+    }
+
+    public static float[] GetMonoAudioData(AudioClip clip)
     {
         if (clip == null) return null;
 
@@ -26,52 +42,102 @@ public static class AudioUtils
             }
             data = monoData;
         }
-
-        float maxVal = 0f;
-        for (int i = 0; i < data.Length; i++)
-        {
-            if (Mathf.Abs(data[i]) > maxVal)
-            {
-                maxVal = Mathf.Abs(data[i]);
-            }
-        }
-        if (maxVal > 0)
-        {
-            for (int i = 0; i < data.Length; i++)
-            {
-                data[i] /= maxVal;
-            }
-        }
-
         return data;
     }
 
+    public static void NormalizePeak(float[] data)
+    {
+        float maxVal = 0f;
+        for (int i = 0; i < data.Length; i++)
+            maxVal = Mathf.Max(maxVal, Mathf.Abs(data[i]));
+        if (maxVal > 0)
+        {
+            float inv = 1f / maxVal;
+            for (int i = 0; i < data.Length; i++) data[i] *= inv;
+        }
+    }
+
+    /// <summary>Kept for backwards compatibility: mono + peak normalisation at the clip's own rate.</summary>
+    public static float[] GetNormalizedAudioData(AudioClip clip)
+    {
+        float[] data = GetMonoAudioData(clip);
+        if (data != null) NormalizePeak(data);
+        return data;
+    }
+
+    // Band-limited rational resampler, equivalent to scipy.signal.resample_poly(x, up, down,
+    // window=('kaiser', KaiserBeta)) with a longer filter (ZeroCrossings taps per side).
+    // Linear interpolation leaves strong images above the source Nyquist that the 88.2 kHz
+    // MFCC / autocorrelation features see; this filter tracks librosa's soxr_hq within ~1e-3
+    // on the final blendshapes (linear interpolation: up to ~4.6).
+    const int ZeroCrossings = 32;
+    const double KaiserBeta = 12.0;
+
     public static float[] Resample(float[] audioData, int fromSampleRate, int toSampleRate)
     {
-        if (fromSampleRate == toSampleRate)
-        {
+        if (fromSampleRate == toSampleRate || audioData == null || audioData.Length == 0)
             return audioData;
-        }
 
-        double ratio = (double)toSampleRate / fromSampleRate;
-        int newLength = (int)(audioData.Length * ratio);
-        float[] resampledData = new float[newLength];
+        int g = Gcd(fromSampleRate, toSampleRate);
+        int up = toSampleRate / g;
+        int down = fromSampleRate / g;
+        int maxRate = Math.Max(up, down);
+        int halfLen = ZeroCrossings * maxRate;
+        int taps = 2 * halfLen + 1;
 
-        for (int i = 0; i < newLength; i++)
+        // firwin(taps, cutoff=1/maxRate, window=('kaiser', beta)), DC gain normalised, times `up`.
+        double cutoff = 1.0 / maxRate;
+        double i0Beta = BesselI0(KaiserBeta);
+        var h = new double[taps];
+        double sum = 0;
+        for (int n = 0; n < taps; n++)
         {
-            float t = i / (float)ratio;
-            float index = Mathf.Floor(t);
-            float frac = t - index;
-
-            int i0 = (int)index;
-            int i1 = i0 + 1;
-
-            if (i1 >= audioData.Length) i1 = audioData.Length - 1;
-
-            resampledData[i] = Mathf.Lerp(audioData[i0], audioData[i1], frac);
+            double m = n - halfLen;
+            double x = cutoff * m;
+            double sinc = m == 0 ? 1.0 : Math.Sin(Math.PI * x) / (Math.PI * x);
+            double r = 2.0 * n / (taps - 1) - 1.0;
+            double w = BesselI0(KaiserBeta * Math.Sqrt(Math.Max(0.0, 1.0 - r * r))) / i0Beta;
+            h[n] = cutoff * sinc * w;
+            sum += h[n];
         }
+        float[] hf = new float[taps];
+        for (int n = 0; n < taps; n++) hf[n] = (float)(h[n] / sum * up);
 
-        return resampledData;
+        int inLen = audioData.Length;
+        int outLen = (int)(((long)inLen * up + down - 1) / down);
+        float[] output = new float[outLen];
+        for (int j = 0; j < outLen; j++)
+        {
+            // y[j] = sum_k x[k] * h[j*down + halfLen - k*up]
+            long c = (long)j * down + halfLen;
+            long kMin = Math.Max(0L, CeilDiv(c - (taps - 1), up));
+            long kMax = Math.Min(inLen - 1L, c / up);
+            double acc = 0;
+            for (long k = kMin; k <= kMax; k++)
+                acc += audioData[k] * hf[c - k * up];
+            output[j] = (float)acc;
+        }
+        return output;
+    }
+
+    static long CeilDiv(long a, long b) => a >= 0 ? (a + b - 1) / b : -((-a) / b);
+
+    static int Gcd(int a, int b)
+    {
+        while (b != 0) { int t = a % b; a = b; b = t; }
+        return a;
+    }
+
+    static double BesselI0(double x)
+    {
+        double sum = 1.0, term = 1.0, q = x * x / 4.0;
+        for (int k = 1; k < 500; k++)
+        {
+            term *= q / ((double)k * k);
+            sum += term;
+            if (term < sum * 1e-17) break;
+        }
+        return sum;
     }
 }
 
@@ -209,7 +275,8 @@ public class AudioFeatureProcessor
         {
             for (int i = 0; i < easeDurationFrames; i++)
             {
-                float factor = (float)i / easeDurationFrames;
+                // np.linspace(0, 1, n): last eased frame reaches exactly 1
+                float factor = easeDurationFrames > 1 ? (float)i / (easeDurationFrames - 1) : 0f;
                 for (int j = 0; j < numFeatures; j++) data[i, j] *= factor;
             }
         }
